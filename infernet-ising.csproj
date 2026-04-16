@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>infernet_ising</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.Probabilistic" Version="0.4.2504.701" />
+    <PackageReference Include="Microsoft.ML.Probabilistic.Compiler" Version="0.4.2504.701" />
+  </ItemGroup>
+
+</Project>
