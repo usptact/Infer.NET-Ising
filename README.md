@@ -39,17 +39,37 @@ P(Y_{i,j} | X_{i,j}) = (1 − ε)  if Y_{i,j} = X_{i,j}
 
 **Inference** is performed with Infer.NET using Expectation Propagation (EP), producing marginals P(X_{i,j} = 1 | Y) and a MAP reconstruction.
 
+## Implementation
+
+- `IsingModel.cs` — the Infer.NET factor graph. X (latent) and Y (observed) are both `VariableArray2D<bool>`. The Ising coupling is encoded as soft equality constraints via `Variable.ConstrainEqualRandom`. Inference runs a single `engine.Infer<Bernoulli[,]>(X)` call to retrieve all pixel marginals at once.
+- `MnistLoader.cs` — IDX binary format reader and per-label index.
+- `ImageUtils.cs` — noise injection, cropping, thresholding, and console rendering.
+- `Program.cs` — CLI entry point; accepts `[digit] [index]` arguments.
+
 ## Build and Run
 
 Prerequisites: [.NET SDK](https://dotnet.microsoft.com/download) (tested on .NET 10).
 
 ```bash
 dotnet build
-dotnet run
+dotnet run                  # digit 8, sample 0 (defaults)
+dotnet run -- 3 12          # digit 3, sample index 12
 ```
+
+The first run compiles the factor graph (10–30 s); subsequent runs reuse the compiled algorithm and are much faster.
 
 ## Data
 
 The project uses binary MNIST images. Download instructions and the dataset are available at:
 
 https://www.kaggle.com/datasets/hojjatk/mnist-dataset
+
+Place the four IDX files under a `data/` directory before running:
+
+```
+data/
+  train-images.idx3-ubyte
+  train-labels.idx1-ubyte
+  t10k-images.idx3-ubyte
+  t10k-labels.idx1-ubyte
+```

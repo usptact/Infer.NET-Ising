@@ -1,6 +1,7 @@
 using Microsoft.ML.Probabilistic.Algorithms;
 using Microsoft.ML.Probabilistic.Distributions;
 using Microsoft.ML.Probabilistic.Models;
+using Range = Microsoft.ML.Probabilistic.Models.Range;
 
 /// <summary>
 /// Ising Markov Random Field for binary image denoising via Expectation Propagation.
@@ -21,8 +22,8 @@ public sealed class IsingModel
 {
     private readonly int _height;
     private readonly int _width;
-    private readonly Variable<bool>[,] _x;   // latent clean-image pixels
-    private readonly Variable<bool>[,] _y;   // observed noisy-image pixels
+    private readonly VariableArray2D<bool> _x;   // latent clean-image pixels
+    private readonly VariableArray2D<bool> _y;   // observed noisy-image pixels
     private readonly InferenceEngine _engine;
 
     /// <summary>Image height this model accepts, in pixels.</summary>
@@ -62,16 +63,15 @@ public sealed class IsingModel
 
         _height = height;
         _width  = width;
-        _x = new Variable<bool>[height, width];
-        _y = new Variable<bool>[height, width];
 
-        BuildModel(beta, epsilon);
+        (_x, _y) = BuildModel(height, width, beta, epsilon);
 
         _engine = new InferenceEngine(new ExpectationPropagation())
         {
-            NumberOfIterations = iterations,
-            ShowProgress       = false,
+            NumberOfIterations  = iterations,
+            ShowProgress        = false,
         };
+        _engine.Compiler.WriteSourceFiles = false;
     }
 
     /// <summary>
@@ -98,36 +98,40 @@ public sealed class IsingModel
                 $"does not match model dimensions {_height}×{_width}.",
                 nameof(noisyImage));
 
-        for (int i = 0; i < _height; i++)
-            for (int j = 0; j < _width; j++)
-                _y[i, j].ObservedValue = noisyImage[i, j];
+        _y.ObservedValue = noisyImage;
+
+        Bernoulli[,] marginals = _engine.Infer<Bernoulli[,]>(_x);
 
         var posteriors = new double[_height, _width];
         for (int i = 0; i < _height; i++)
             for (int j = 0; j < _width; j++)
-                posteriors[i, j] = _engine.Infer<Bernoulli>(_x[i, j]).GetProbTrue();
-
+                posteriors[i, j] = marginals[i, j].GetProbTrue();
         return posteriors;
     }
 
     // ── Model construction ───────────────────────────────────────────────────
 
-    private void BuildModel(double beta, double epsilon)
+    private static (VariableArray2D<bool> x, VariableArray2D<bool> y) BuildModel(
+        int height, int width, double beta, double epsilon)
     {
-        DeclareLatentVariables();
-        AddIsingCoupling(beta);
-        AddObservationModel(epsilon);
+        var rows = new Range(height).Named("rows");
+        var cols = new Range(width).Named("cols");
+
+        var x = DeclareLatentVariables(rows, cols);
+        AddIsingCoupling(x, height, width, beta);
+        var y = AddObservationModel(x, rows, cols, epsilon);
+        return (x, y);
     }
 
     /// <summary>
     /// Each latent pixel gets a flat Bernoulli(0.5) marginal prior.
     /// The spatial structure is supplied entirely by the pairwise coupling factors.
     /// </summary>
-    private void DeclareLatentVariables()
+    private static VariableArray2D<bool> DeclareLatentVariables(Range rows, Range cols)
     {
-        for (int i = 0; i < _height; i++)
-            for (int j = 0; j < _width; j++)
-                _x[i, j] = Variable.Bernoulli(0.5).Named($"x{i}_{j}");
+        var x = Variable.Array<bool>(rows, cols).Named("X");
+        x[rows, cols] = Variable.Bernoulli(0.5).ForEach(rows, cols);
+        return x;
     }
 
     /// <summary>
@@ -138,17 +142,17 @@ public sealed class IsingModel
     /// sigmoid.  This rewards same-valued neighbours and penalises disagreement
     /// equally for both (0,0) and (1,1) pairs.</para>
     /// </summary>
-    private void AddIsingCoupling(double beta)
+    private static void AddIsingCoupling(VariableArray2D<bool> x, int height, int width, double beta)
     {
         double pAgree = 1.0 / (1.0 + Math.Exp(-2.0 * beta));  // sigmoid(2β)
 
-        for (int i = 0; i < _height; i++)           // horizontal edges
-            for (int j = 0; j < _width - 1; j++)
-                ConstrainNeighbours(_x[i, j], _x[i, j + 1], pAgree);
+        for (int i = 0; i < height; i++)           // horizontal edges
+            for (int j = 0; j < width - 1; j++)
+                ConstrainNeighbours(x[i, j], x[i, j + 1], pAgree);
 
-        for (int i = 0; i < _height - 1; i++)       // vertical edges
-            for (int j = 0; j < _width; j++)
-                ConstrainNeighbours(_x[i, j], _x[i + 1, j], pAgree);
+        for (int i = 0; i < height - 1; i++)       // vertical edges
+            for (int j = 0; j < width; j++)
+                ConstrainNeighbours(x[i, j], x[i + 1, j], pAgree);
     }
 
     /// <summary>
@@ -159,20 +163,22 @@ public sealed class IsingModel
     ///   P(Y[i,j] = 1 | X[i,j] = false) = ε
     /// </para>
     ///
-    /// <para>Observation variables are declared here but left unobserved until
-    /// <see cref="Infer"/> sets their <c>ObservedValue</c>.</para>
+    /// <para>Y is declared as an observed array; its <c>ObservedValue</c> is set
+    /// per inference call in <see cref="Infer"/>.</para>
     /// </summary>
-    private void AddObservationModel(double epsilon)
+    private static VariableArray2D<bool> AddObservationModel(
+        VariableArray2D<bool> x, Range rows, Range cols, double epsilon)
     {
-        for (int i = 0; i < _height; i++)
-            for (int j = 0; j < _width; j++)
-            {
-                _y[i, j] = Variable.New<bool>().Named($"y{i}_{j}");
-                using (Variable.If(_x[i, j]))
-                    _y[i, j].SetTo(Variable.Bernoulli(1.0 - epsilon));
-                using (Variable.IfNot(_x[i, j]))
-                    _y[i, j].SetTo(Variable.Bernoulli(epsilon));
-            }
+        var y = Variable.Observed(new bool[rows.SizeAsInt, cols.SizeAsInt], rows, cols).Named("Y");
+        using (Variable.ForEach(rows))
+        using (Variable.ForEach(cols))
+        {
+            using (Variable.If(x[rows, cols]))
+                Variable.ConstrainEqualRandom(y[rows, cols], new Bernoulli(1.0 - epsilon));
+            using (Variable.IfNot(x[rows, cols]))
+                Variable.ConstrainEqualRandom(y[rows, cols], new Bernoulli(epsilon));
+        }
+        return y;
     }
 
     /// <summary>
