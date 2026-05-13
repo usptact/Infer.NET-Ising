@@ -28,7 +28,10 @@ Higher $\beta$ → smoother reconstructions. The 4-neighbourhood (up/down/left/r
 
 **Noise model** — binary symmetric channel with flip probability $\varepsilon$:
 
-$$P(Y_{i,j} \mid X_{i,j}) = \begin{cases} 1 - \varepsilon & \text{if } Y_{i,j} = X_{i,j} \\ \varepsilon & \text{otherwise} \end{cases}$$
+$$P(Y_{i,j} \mid X_{i,j}) = \begin{cases}
+1 - \varepsilon & \text{if } Y_{i,j} = X_{i,j} \\
+\varepsilon & \text{otherwise}
+\end{cases}$$
 
 **Inference** is performed with Infer.NET using Expectation Propagation (EP), producing marginals $P(X_{i,j} = 1 \mid Y)$ and a MAP reconstruction.
 
